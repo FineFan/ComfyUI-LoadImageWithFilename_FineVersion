@@ -8,6 +8,9 @@ from PIL.PngImagePlugin import PngInfo
 import folder_paths
 import node_helpers
 
+from .filename_utils import resolve_original_filename
+
+
 class LoadImageWithFilename:
     @classmethod
     def INPUT_TYPES(s):
@@ -20,11 +23,16 @@ class LoadImageWithFilename:
 
     CATEGORY = "image"
 
-    RETURN_TYPES = ("IMAGE", "MASK", "STRING")
-    RETURN_NAMES = ("image", "mask", "filename")
+    RETURN_TYPES = ("IMAGE", "MASK", "STRING", "STRING")
+    RETURN_NAMES = ("image", "mask", "filename", "original_filename")
     FUNCTION = "load_image"
 
     def load_image(self, image):
+        # Keep the widget value (e.g. "02.png" or
+        # "clipspace/clipspace-painted-masked-xxx.png [input]") safe from the
+        # loop below, which rebinds the local name ``image`` to a tensor.
+        widget_value = str(image)
+
         image_path = folder_paths.get_annotated_filepath(image)
 
         img = node_helpers.pillow(Image.open, image_path)
@@ -69,10 +77,16 @@ class LoadImageWithFilename:
             output_image = output_images[0]
             output_mask = output_masks[0]
 
-        # Extract filename from the image path
+        # Extract filename from the image path. ``filename`` keeps the *current*
+        # basename (so users still see ``clipspace-painted-masked-xxx.png`` when
+        # the image really came from the mask editor); ``original_filename``
+        # resolves back to the user-facing original name via the source map.
+        # NOTE: pass ``widget_value`` (the original string), NOT ``image`` --
+        # the loop above rebound ``image`` to a torch tensor.
         filename = os.path.basename(image_path)
+        original_filename = resolve_original_filename(widget_value, fallback_basename=filename)
 
-        return (output_image, output_mask, filename)
+        return (output_image, output_mask, filename, original_filename)
 
     @classmethod
     def IS_CHANGED(s, image):
@@ -99,8 +113,8 @@ class LoadImageFolder:
 
     CATEGORY = "image"
 
-    RETURN_TYPES = ("IMAGE", "MASK", "STRING")
-    RETURN_NAMES = ("image", "mask", "filenames")
+    RETURN_TYPES = ("IMAGE", "MASK", "STRING", "STRING")
+    RETURN_NAMES = ("image", "mask", "filenames", "original_filenames")
     FUNCTION = "load_folder"
 
     def load_folder(self, folder_path):
@@ -108,13 +122,13 @@ class LoadImageFolder:
         if not folder_path or not os.path.exists(folder_path):
             empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
             empty_mask = torch.zeros((1, 64, 64), dtype=torch.float32)
-            return (empty_image, empty_mask, "")
+            return (empty_image, empty_mask, "", "")
 
         # Check if it's a directory
         if not os.path.isdir(folder_path):
             empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
             empty_mask = torch.zeros((1, 64, 64), dtype=torch.float32)
-            return (empty_image, empty_mask, "")
+            return (empty_image, empty_mask, "", "")
 
         # Get all image files in the folder
         image_files = []
@@ -132,12 +146,13 @@ class LoadImageFolder:
             # Return empty tensors if no images found
             empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
             empty_mask = torch.zeros((1, 64, 64), dtype=torch.float32)
-            return (empty_image, empty_mask, "")
+            return (empty_image, empty_mask, "", "")
 
         # Load all images in the folder
         all_images = []
         all_masks = []
         all_filenames = []
+        all_original_filenames = []
 
         for filename in sorted(image_files):
             file_path = os.path.join(folder_path, filename)
@@ -188,6 +203,9 @@ class LoadImageFolder:
                 all_images.append(output_image)
                 all_masks.append(output_mask)
                 all_filenames.append(filename)
+                all_original_filenames.append(
+                    resolve_original_filename(filename, fallback_basename=filename)
+                )
 
             except Exception as e:
                 print(f"Error loading {filename}: {e}")
@@ -197,13 +215,13 @@ class LoadImageFolder:
             # Return empty tensors if no images could be loaded
             empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
             empty_mask = torch.zeros((1, 64, 64), dtype=torch.float32)
-            return (empty_image, empty_mask, "")
+            return (empty_image, empty_mask, "", "")
 
         # Concatenate all images and masks
         combined_images = torch.cat(all_images, dim=0)
         combined_masks = torch.cat(all_masks, dim=0)
 
-        return (combined_images, combined_masks, all_filenames)
+        return (combined_images, combined_masks, all_filenames, all_original_filenames)
 
     @classmethod
     def IS_CHANGED(s, folder_path):

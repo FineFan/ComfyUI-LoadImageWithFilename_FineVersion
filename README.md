@@ -1,4 +1,13 @@
-# ComfyUI LoadImageWithFilename
+# ComfyUI LoadImageWithFilename (FineVersion)
+
+Fork of [kymeraj/comfyui-load-image-with-filename](https://github.com/kymeraj/comfyui-load-image-with-filename).
+Renamed so it can sit alongside the upstream node in the same ComfyUI
+install without colliding.
+
+> **Naming**: every node class key and display name carries the
+> ``_FineVersion`` / ``(FineVersion)`` suffix so the upstream package can be
+> installed side-by-side.  All log messages are prefixed with
+> ``[FineVersion]`` for the same reason.
 
 This custom node extends ComfyUI's image loading functionality with filename output and folder loading capabilities.
 
@@ -23,9 +32,13 @@ This custom node extends ComfyUI's image loading functionality with filename out
 
 ## Installation
 
-1. Place `nodes.py` in your ComfyUI `custom_nodes` directory
+1. Copy the whole `ComfyUI-LoadImageWithFilename_FineVersion` folder into your
+   ComfyUI `custom_nodes` directory
 2. Restart ComfyUI
 3. The new nodes will appear in the "image" category
+4. **Hard-refresh the browser (Ctrl+F5)** so the frontend extension
+   `js/track_clipspace.js` is picked up (required for `original_filename` to
+   survive the MaskEditor; see below)
 
 ## Usage
 
@@ -35,6 +48,23 @@ This custom node extends ComfyUI's image loading functionality with filename out
   - `image`: The loaded image tensor
   - `mask`: The image mask (if available)
   - `filename`: The filename of the loaded image
+  - `original_filename`: The ORIGINAL filename, even after painting a mask in
+    the MaskEditor (which renames the widget value to
+    `clipspace-painted-masked-xxx.png`)
+
+### How `original_filename` works
+The modern ComfyUI frontend (>= 1.5x) MaskEditor no longer sends the
+original image reference to the server when saving a painted mask. This
+package therefore ships two cooperating pieces:
+
+- `js/track_clipspace.js` (frontend extension, served via
+  `WEB_DIRECTORY = "./js"`): wraps `window.fetch` and appends an
+  `original_ref` field to clipspace uploads, read from the node's image
+  widget before the editor overwrites it.
+- `__init__.py` (server middleware): intercepts `/upload/image` +
+  `/upload/mask`, persists the mapping into
+  `input/clipspace/_source_map.json`, and resolves chains
+  (mask-on-mask) back to the root original file.
 
 ### LoadImageFolder
 - **Input**: Enter a folder path as a string
