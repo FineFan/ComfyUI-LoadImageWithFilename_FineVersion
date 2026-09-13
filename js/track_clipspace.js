@@ -69,16 +69,20 @@ function findSourceRef() {
             node.widgets.find((w) => w.name === "image");
         if (w && w.value) {
             const ref = parseWidgetValue(w.value);
-            // If the value is already a clipspace artefact (the editor may
-            // overwrite it mid-save), skip it so the fallback below can find
-            // the real source image instead of recording clipspace->clipspace.
-            if (ref && !isClipspaceName(ref.filename)) return ref;
+            // Return whatever the node currently points at — including a
+            // clipspace artefact. The server-side middleware resolves the
+            // mask-on-mask chain (clipspace -> ... -> original file) so that
+            // re-masking the same image multiple times still traces back to
+            // the very first original filename (e.g. 02.png).
+            if (ref) return ref;
         }
     } catch (e) {
         /* ignore */
     }
-    // 2) fallback: exactly one node in the graph has a non-clipspace image
-    //    widget value — use it.
+    // 2) fallback: exactly one node in the graph has an image widget — use it,
+    //    even if it already points at a clipspace artefact. The server-side
+    //    middleware resolves the mask-on-mask chain back to the root original
+    //    filename, so we must still inject the clipspace value here.
     try {
         const nodes = (app.graph && app.graph._nodes) || [];
         const candidates = [];
@@ -88,9 +92,7 @@ function findSourceRef() {
                 n.widgets.find((w) => w.name === "image");
             if (w && w.value) {
                 const ref = parseWidgetValue(w.value);
-                if (ref && !isClipspaceName(ref.filename)) {
-                    candidates.push(ref);
-                }
+                if (ref) candidates.push(ref);
             }
         }
         if (candidates.length === 1) return candidates[0];

@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 
 from aiohttp import web
 
@@ -68,6 +69,15 @@ _MIDDLEWARE_INSTALLED = False
 @web.middleware
 async def _track_clipspace_sources(request, handler):
     """Wrap every upload; if it landed in ``clipspace`` remember the source."""
+    # Pre-handler: when uploading a file whose name already exists in the
+    # input dir, rename the OLD file with a timestamp so the incoming upload
+    # keeps its clean name (instead of ComfyUI auto-adding a "(1)" suffix).
+    if request.method == "POST" and request.path in _UPLOAD_PATHS:
+        try:
+            await _maybe_backup_old_file(request)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[FineVersion] failed to backup existing file: %s", exc)
+
     try:
         response = await handler(request)
     except Exception:
@@ -109,6 +119,65 @@ async def _ensure_registered_middleware(app):
             "first upload request",
             exc,
         )
+
+
+async def _maybe_backup_old_file(request) -> None:
+    """Rename an existing same-name file before an incoming upload lands.
+
+    ComfyUI's upload handler auto-renames the *incoming* file (``foo.png`` ->
+    ``foo (1).png``) when the target already exists.  For Fine's product-image
+    workflow (every product ships files named ``detail_01.png`` etc.) that
+    breaks ``original_filename``.  Instead we rename the *existing* file to
+    ``foo_YYYYMMDDHHMMSS.png`` so the incoming upload keeps its clean name.
+    """
+    post = await request.post()
+    image = post.get("image")
+    if image is None:
+        return
+
+    raw_name = getattr(image, "filename", None) or getattr(image, "name", None) or ""
+    filename = os.path.basename(str(raw_name))
+    if not filename:
+        return
+
+    upload_type = str(post.get("type") or "input").lower()
+    if upload_type != "input":
+        return
+
+    subfolder = post.get("subfolder", "") or ""
+
+    # Lazy import so importing this module never breaks on systems where
+    # ComfyUI is not on sys.path.
+    import folder_paths
+
+    input_dir = folder_paths.get_input_directory()
+    target_dir = input_dir
+    if subfolder:
+        norm = os.path.normpath(str(subfolder))
+        # Refuse path traversal / absolute paths.
+        if norm.startswith("..") or os.path.isabs(norm):
+            return
+        target_dir = os.path.join(input_dir, norm)
+
+    target_path = os.path.abspath(os.path.join(target_dir, filename))
+    if not os.path.isfile(target_path):
+        return
+
+    timestamp = time.strftime("%Y%m%d%H%M%S")
+    stem, ext = os.path.splitext(filename)
+    new_name = f"{stem}_{timestamp}{ext}"
+    new_path = os.path.join(target_dir, new_name)
+    counter = 1
+    while os.path.exists(new_path):
+        new_name = f"{stem}_{timestamp}_{counter}{ext}"
+        new_path = os.path.join(target_dir, new_name)
+        counter += 1
+
+    try:
+        os.rename(target_path, new_path)
+        logger.info("[FineVersion] renamed existing file: %s -> %s", filename, new_name)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[FineVersion] rename failed: %s", exc)
 
 
 async def _maybe_record_source(request, response) -> None:

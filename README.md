@@ -100,6 +100,23 @@ package therefore ships two cooperating pieces:
 - The SaveImageWithFilename node preserves original filenames when possible
 - If filenames contain extensions, they will be replaced with .png
 
+## Changelog
+
+### 2026-09-14
+
+- **Fix** — `original_filename` now resolves back to the original filename
+  correctly even after re-masking the same image multiple times in a row.
+  The frontend extension no longer drops `original_ref` when the widget
+  already points at a `clipspace-*` artefact, so the server middleware can
+  walk the mask-on-mask chain (`clipspace → clipspace → original`) back to
+  the root file (e.g. `detail_01.png`).
+- **New** — On drag-and-drop upload, if a file with the same name already
+  exists in the input folder, the OLD file is renamed with a
+  `YYYYMMDDHHMMSS` timestamp (e.g. `detail_01.png` →
+  `detail_01_20260914070000.png`) and the newly uploaded file keeps its clean
+  name. This avoids ComfyUI's default `(1)`/`(2)` auto-suffix and keeps
+  `original_filename` pointing at the name you actually uploaded.
+
 ## Based On
 
 - [ComfyUI LoadImage Node](https://github.com/comfyanonymous/ComfyUI/blob/master/nodes.py)
